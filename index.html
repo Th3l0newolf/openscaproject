@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OpenSCA Project - Dependency Scanner</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+        .dark ::-webkit-scrollbar-thumb { background-color: #475569; }
+        ::-webkit-scrollbar-track { background-color: transparent; }
+        
+        @keyframes scan-pulse {
+            0%, 100% { stroke-opacity: 1; }
+            50% { stroke-opacity: 0.4; }
+        }
+        .scan-beam { animation: scan-pulse 2s infinite ease-in-out; }
+        
+        .modal-enter-active { animation: modal-in 0.2s ease-out forwards; }
+        @keyframes modal-in { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    </style>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        primary: '#2563eb', secondary: '#4f46e5', critical: '#dc2626',
+                        high: '#f97316', medium: '#facc15', low: '#10b981',
+                        slate: { 850: '#1e293b', 950: '#020617' }
+                    },
+                    screens: { 'xs': '475px' }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 min-h-screen font-sans text-slate-900 dark:text-slate-100 selection:bg-primary/20 selection:text-primary pb-12 flex flex-col transition-colors duration-300">
+
+    <nav class="sticky top-0 z-40 w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200/60 dark:border-slate-800/60 transition-colors duration-300">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="relative w-8 h-8 text-primary flex-shrink-0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-full h-full">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" class="text-primary fill-primary/10 dark:fill-primary/20"/>
+                        <path d="M12 8v8" class="text-primary"/>
+                        <path d="M8 12h8" class="text-primary"/>
+                    </svg>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-none">OpenSCA</span>
+                    <span class="text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-none mt-0.5">Security Scanner</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 sm:gap-4">
+                <a href="https://osv.dev" target="_blank" class="hidden sm:flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-primary dark:text-slate-400 dark:hover:text-primary transition-colors">
+                    <i data-lucide="database" class="w-3.5 h-3.5"></i>
+                    <span>OSV Database</span>
+                </a>
+                <div class="h-4 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block"></div>
+                
+                <button id="theme-toggle" class="p-2 text-slate-400 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" title="Toggle Theme">
+                    <i id="theme-icon" data-lucide="moon" class="w-5 h-5"></i>
+                </button>
+
+                <button onclick="window.location.reload()" class="p-2 text-slate-400 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" title="Reset Scanner">
+                    <i data-lucide="rotate-ccw" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        
+        <div class="bg-white dark:bg-slate-900 p-1 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors duration-300">
+            <div class="p-5 sm:p-6">
+                <div class="flex items-center justify-between mb-5">
+                    <h2 class="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center">
+                        <i data-lucide="settings-2" class="w-4 h-4 mr-2 text-primary"></i> Configuration
+                    </h2>
+                    <div id="status-pill" class="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-bold flex items-center border border-slate-200 dark:border-slate-700">
+                        <span class="w-1.5 h-1.5 bg-slate-400 rounded-full mr-2"></span> Idle
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-12 gap-5">
+                    <div class="sm:col-span-4">
+                        <label for="ecosystem" class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">Ecosystem</label>
+                        <div class="relative group">
+                            <select id="ecosystem" class="w-full pl-3 pr-10 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition appearance-none cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50">
+                                <option value="" disabled selected>Select...</option>
+                                <option value="npm">npm (Node.js)</option>
+                                <option value="PyPI">PyPI (Python)</option>
+                                <option value="Go">Go Modules</option>
+                                <option value="Maven">Maven (Java)</option>
+                                <option value="crates.io">Cargo (Rust)</option>
+                                <option value="Packagist">Composer (PHP)</option>
+                            </select>
+                            <div class="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-slate-400 group-hover:text-primary transition-colors">
+                                <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sm:col-span-6">
+                        <label for="dependency-file" class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">Manifest File</label>
+                        <input type="file" id="dependency-file" accept=".json,.txt,.lock,.mod,.xml" class="block w-full text-sm text-slate-500 dark:text-slate-400
+                            file:mr-3 file:py-2.5 file:px-4 file:rounded-lg file:border-0 
+                            file:text-xs file:font-bold file:uppercase file:bg-slate-800 dark:file:bg-slate-700 file:text-white 
+                            hover:file:bg-slate-700 dark:hover:file:bg-slate-600 file:cursor-pointer cursor-pointer
+                            border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800 transition-all hover:bg-slate-100 dark:hover:bg-slate-700/50" />
+                    </div>
+
+                    <div class="sm:col-span-2 flex items-end">
+                        <button id="scan-button" class="w-full py-2.5 bg-primary hover:bg-blue-600 text-white text-sm font-bold rounded-lg shadow-sm shadow-blue-200/50 dark:shadow-none transition-all active:scale-95 disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center h-[42px]" disabled>
+                            Scan
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="mt-4 pt-3 border-t border-slate-50 dark:border-slate-800 flex items-center">
+                    <span id="status-message" class="text-xs font-medium text-slate-400">Awaiting input...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col min-h-[400px] transition-colors duration-300">
+            <div class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center">
+                        <i data-lucide="activity" class="w-4 h-4 text-primary mr-2"></i>
+                        Report
+                    </h2>
+                    <span id="vulnerability-count" class="hidden"></span>
+                </div>
+                
+                <!-- Download Actions -->
+                <div id="download-actions" class="hidden flex items-center gap-2">
+                    <button onclick="downloadReport('json')" class="p-1.5 text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors" title="Download JSON">
+                        <i data-lucide="file-json" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="downloadReport('csv')" class="p-1.5 text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors" title="Download CSV">
+                        <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div id="security-dashboard" class="hidden bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 p-6 animate-in slide-in-from-top-5 duration-300">
+                <!-- Dashboard Content -->
+            </div>
+
+            <div id="results-container" class="p-4 sm:p-6 h-[500px] overflow-y-auto space-y-3 bg-slate-50/30 dark:bg-slate-950/30 relative">
+                <div id="initial-message" class="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-400/60 dark:text-slate-500/60 pointer-events-none">
+                    <div class="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4 transition-colors duration-300">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-10 h-10 text-slate-400 dark:text-slate-500">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                            <circle cx="12" cy="12" r="3" />
+                        </svg>
+                    </div>
+                    <p class="text-base font-medium text-slate-600 dark:text-slate-400">Ready to Analyze</p>
+                    <p class="text-sm text-slate-400 dark:text-slate-500">Select an ecosystem and upload a file to start.</p>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="py-6 text-center text-xs text-slate-400 dark:text-slate-600">
+        <p>Crafted by <span class="font-bold text-slate-500 dark:text-slate-500">Th3l0newolf</span></p>
+    </footer>
+
+    <div id="modal" class="fixed inset-0 z-50 hidden items-end sm:items-center justify-center p-0 sm:p-4" aria-modal="true" role="dialog">
+        <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeModal()"></div>
+        <div class="bg-white dark:bg-slate-900 w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl transform transition-transform flex flex-col max-h-[85vh] sm:max-h-[90vh] relative z-10 modal-enter-active border border-transparent dark:border-slate-700">
+            <div class="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-start bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur rounded-t-2xl sticky top-0 z-20">
+                <div>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5 block">Advisory Detail</span>
+                    <h3 id="modal-title" class="text-lg sm:text-xl font-bold text-slate-800 dark:text-slate-100 break-all font-mono leading-tight"></h3>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-slate-300 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="modal-content" class="p-5 sm:p-6 space-y-6 overflow-y-auto overscroll-contain">
+                <!-- Content -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Global State ---
+        let currentScanResults = [];
+
+        // --- Theme Logic ---
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const themeIcon = document.getElementById('theme-icon');
+        
+        function updateThemeIcon() {
+            const isDark = document.documentElement.classList.contains('dark');
+            themeIcon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+            if(typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+            const isDark = document.documentElement.classList.contains('dark');
+            localStorage.setItem('color-theme', isDark ? 'dark' : 'light');
+            updateThemeIcon();
+        }
+
+        if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+        themeToggleBtn.addEventListener('click', toggleTheme);
+
+        const API_URL_BATCH = 'https://api.osv.dev/v1/querybatch';
+        const API_URL_VULN = 'https://api.osv.dev/v1/vulns/';
+        const GHSA_BASE_URL = 'https://github.com/advisories/';
+        
+        const fileInput = document.getElementById('dependency-file');
+        const ecosystemSelect = document.getElementById('ecosystem');
+        const scanButton = document.getElementById('scan-button');
+        const statusPill = document.getElementById('status-pill');
+        const statusMessage = document.getElementById('status-message');
+        const resultsContainer = document.getElementById('results-container');
+        const vulnerabilityCount = document.getElementById('vulnerability-count');
+        const initialMessage = document.getElementById('initial-message');
+        const securityDashboard = document.getElementById('security-dashboard');
+        const downloadActions = document.getElementById('download-actions');
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalContent = document.getElementById('modal-content');
+
+        // --- Helper Functions ---
+        function getSeverityWeight(severity) {
+            if (!severity) return 0;
+            const s = String(severity).toUpperCase();
+            if (!isNaN(parseFloat(s))) {
+                const score = parseFloat(s);
+                if (score >= 9.0) return 5; 
+                if (score >= 7.0) return 4; 
+                if (score >= 4.0) return 3; 
+                if (score > 0.0) return 2; 
+                return 0;
+            }
+            switch (s) {
+                case 'CRITICAL': return 5;
+                case 'HIGH': return 4;
+                case 'MODERATE': case 'MEDIUM': return 3;
+                case 'LOW': return 2;
+                default: return 1;
+            }
+        }
+
+        function getSeverityBadge(severity) {
+            if (!severity) severity = 'UNKNOWN';
+            const s = String(severity).toUpperCase();
+            let color = 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700';
+            let label = s;
+
+            if (!isNaN(parseFloat(s))) {
+                const score = parseFloat(s);
+                label = `${score.toFixed(1)} (CVSS)`;
+                if (score >= 9.0) color = 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800';
+                else if (score >= 7.0) color = 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800';
+                else if (score >= 4.0) color = 'bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800';
+                else if (score > 0.0) color = 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800';
+            } else {
+                switch (s) {
+                    case 'CRITICAL': color = 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800'; break;
+                    case 'HIGH': color = 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800'; break;
+                    case 'MODERATE': case 'MEDIUM': color = 'bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800'; break;
+                    case 'LOW': color = 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800'; break;
+                }
+            }
+            return `<span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${color}">${label}</span>`;
+        }
+        
+        async function fetchWithRetry(url, options, maxRetries = 3) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status === 429) throw new Error("Rate limit exceeded");
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return await response.json();
+                } catch (error) {
+                    if (i === maxRetries - 1) throw error;
+                    await new Promise(resolve => setTimeout(resolve, (Math.pow(2, i) * 1000) + Math.random() * 500));
+                }
+            }
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const d = new Date(dateString);
+            return isNaN(d.getTime()) ? 'N/A' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+
+        function updateState() {
+            const ready = fileInput.files.length > 0 && ecosystemSelect.value;
+            scanButton.disabled = !ready;
+            if (ready) {
+                statusPill.innerHTML = `<span class="w-1.5 h-1.5 bg-green-500 rounded-full mr-2"></span> Ready`;
+                statusPill.className = "px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800 text-xs font-bold flex items-center";
+                statusMessage.textContent = "Ready to scan. Click 'Scan' to begin.";
+                statusMessage.className = "text-xs font-medium text-green-600 dark:text-green-400";
+            } else {
+                statusPill.innerHTML = `<span class="w-1.5 h-1.5 bg-slate-400 rounded-full mr-2"></span> Idle`;
+                statusPill.className = "px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700 text-xs font-bold flex items-center";
+                statusMessage.textContent = "Please select an ecosystem and upload a manifest file.";
+                statusMessage.className = "text-xs font-medium text-slate-400 dark:text-slate-500";
+            }
+        }
+
+        function renderDashboard(metrics) {
+            const { score, grade, gradeColor, gradeBg, distribution } = metrics;
+            
+            securityDashboard.innerHTML = `
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="${gradeBg} p-4 rounded-xl border flex flex-col items-center justify-center text-center">
+                        <span class="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Risk Grade</span>
+                        <div class="text-5xl font-black ${gradeColor} mt-1">${grade}</div>
+                    </div>
+                    
+                    <div class="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col items-center justify-center text-center relative overflow-hidden">
+                        <span class="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Health Score</span>
+                        <div class="text-3xl sm:text-4xl font-black text-slate-800 dark:text-slate-100 mt-1">${score}<span class="text-sm text-slate-300 font-medium ml-1">/100</span></div>
+                        <div class="w-full max-w-[100px] bg-slate-100 dark:bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
+                             <div class="h-full ${gradeColor.replace('text-', 'bg-')}" style="width: ${score}%"></div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col justify-center space-y-2">
+                        ${Object.entries(distribution).slice(0,4).map(([k,v]) => `
+                            <div class="flex items-center justify-between text-xs">
+                                <span class="font-bold text-slate-500 dark:text-slate-400 capitalize">${k.toLowerCase()}</span>
+                                <span class="font-mono font-bold ${v>0 ? 'text-slate-800 dark:text-slate-200' : 'text-slate-300 dark:text-slate-600'}">${v}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            securityDashboard.classList.remove('hidden');
+        }
+
+        function calculateSecurityMetrics(vulnerabilities) {
+            const distribution = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 };
+            let score = 100;
+
+            vulnerabilities.forEach(v => {
+                let sev = 'UNKNOWN';
+                if (!isNaN(parseFloat(v.severity))) {
+                    const s = parseFloat(v.severity);
+                    if (s >= 9.0) sev = 'CRITICAL';
+                    else if (s >= 7.0) sev = 'HIGH';
+                    else if (s >= 4.0) sev = 'MEDIUM';
+                    else if (s > 0) sev = 'LOW';
+                } else {
+                     const s = String(v.severity).toUpperCase();
+                     if (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(s)) sev = s;
+                }
+                distribution[sev]++;
+                if (sev === 'CRITICAL') score -= 25;
+                else if (sev === 'HIGH') score -= 15;
+                else if (sev === 'MEDIUM') score -= 5;
+                else if (sev === 'LOW') score -= 1;
+                else score -= 2;
+            });
+
+            score = Math.max(0, score);
+            let grade = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
+            let gradeColor = score >= 90 ? 'text-green-600 dark:text-green-400' : score >= 70 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400';
+            let gradeBg = score >= 90 ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800' : score >= 70 ? 'bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800' : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800';
+
+            return { score, grade, gradeColor, gradeBg, distribution };
+        }
+
+        // --- Download Function ---
+        function downloadReport(format) {
+            if (!currentScanResults.length) return;
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `opensca-report-${timestamp}`;
+            let content = '';
+            let mimeType = '';
+
+            if (format === 'json') {
+                content = JSON.stringify(currentScanResults, null, 2);
+                mimeType = 'application/json';
+                const blob = new Blob([content], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${filename}.json`;
+                a.click();
+            } else if (format === 'csv') {
+                const headers = ['Package', 'Version', 'ID', 'Severity', 'Summary', 'Fix Version', 'References'];
+                const rows = currentScanResults.map(v => [
+                    v.packageName,
+                    v.currentVersion,
+                    v.id,
+                    v.severity,
+                    `"${(v.summary || '').replace(/"/g, '""')}"`,
+                    v.fixVersion,
+                    `"${v.references.map(r => r.url).join('; ')}"`
+                ]);
+                content = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+                mimeType = 'text/csv';
+                const blob = new Blob([content], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${filename}.csv`;
+                a.click();
+            }
+        }
+
+        // --- Parsing ---
+        function parseDependencies(name, content, eco) {
+            const deps = [];
+            try {
+                if (eco === 'npm' && name.endsWith('.json')) {
+                    const data = JSON.parse(content);
+                    const pkgs = data.packages || data.dependencies || {};
+                    for (const k in pkgs) {
+                        if (!k || k==="" || k==="node_modules" || k.includes('/node_modules/')) continue;
+                        const p = pkgs[k];
+                        let n = k;
+                        let v = p.version || p.current;
+                        if (data.packages) {
+                            if (n.startsWith('node_modules/')) n = n.substring(13);
+                            const parts = n.split('/');
+                            n = (parts.length > 1 && parts[0].startsWith('@')) ? `${parts[0]}/${parts[1]}` : parts[0];
+                        } else if (typeof p === 'string') v = p;
+                        if (v && n) deps.push({ name: n, version: v.replace(/^[~^>=<@]/g, ''), ecosystem: 'npm' });
+                    }
+                } else if (eco === 'PyPI') {
+                    content.split('\n').forEach(l => {
+                        l = l.trim();
+                        if(l && !l.startsWith('#')) {
+                            const m = l.match(/^([a-zA-Z0-9._-]+)\s*(?:[><=~!]?=\s*|@\s*)?([0-9a-zA-Z._-]+)/);
+                            if(m) deps.push({ name: m[1], version: m[2], ecosystem: 'PyPI' });
+                        }
+                    });
+                } else if (eco === 'Go' && name.endsWith('.mod')) {
+                    const lines = content.split('\n');
+                    let inRequireBlock = false;
+                    lines.forEach(line => {
+                        const l = line.trim().split('//')[0].trim();
+                        if (!l) return;
+                        if (l === 'require (' || l === 'require(') {
+                            inRequireBlock = true;
+                            return;
+                        }
+                        if (l === ')') {
+                            inRequireBlock = false;
+                            return;
+                        }
+                        let parts = [];
+                        if (l.startsWith('require ')) {
+                             parts = l.substring(8).trim().split(/\s+/);
+                        } else if (inRequireBlock) {
+                             parts = l.split(/\s+/);
+                        }
+                        if (parts.length >= 2) {
+                            const name = parts[0];
+                            const version = parts[1];
+                            if (name && version && version.startsWith('v')) {
+                                deps.push({ name: name, version: version.substring(1), ecosystem: 'Go' });
+                            }
+                        }
+                    });
+                } else if (eco === 'crates.io' && name.endsWith('.lock')) {
+                    const sections = content.split('[[package]]');
+                    sections.forEach(section => {
+                        const nameMatch = section.match(/name\s*=\s*"([^"]+)"/);
+                        const versionMatch = section.match(/version\s*=\s*"([^"]+)"/);
+                        if (nameMatch && versionMatch) {
+                            deps.push({ name: nameMatch[1], version: versionMatch[1], ecosystem: 'crates.io' });
+                        }
+                    });
+                } else if (eco === 'Packagist' && name.endsWith('.lock')) {
+                    const data = JSON.parse(content);
+                    [...(data.packages||[]), ...(data['packages-dev']||[])].forEach(p => {
+                        if(p.name && p.version) deps.push({ name: p.name, version: p.version, ecosystem: 'Packagist' });
+                    });
+                } else if (eco === 'Maven' && name.endsWith('.xml')) {
+                    try {
+                        const parser = new DOMParser();
+                        const xmlDoc = parser.parseFromString(content, "text/xml");
+                        if(xmlDoc.getElementsByTagName("parsererror").length > 0) throw new Error("Invalid XML");
+                        const getText = (el, tag) => el.getElementsByTagName(tag)[0]?.textContent?.trim();
+                        const depNodes = xmlDoc.getElementsByTagName("dependency");
+                        for (let i = 0; i < depNodes.length; i++) {
+                            const el = depNodes[i];
+                            const g = getText(el, "groupId");
+                            const a = getText(el, "artifactId");
+                            const v = getText(el, "version");
+                            if (g && a && v && !v.startsWith('$')) {
+                                deps.push({ name: `${g}:${a}`, version: v, ecosystem: 'Maven' });
+                            }
+                        }
+                        const parent = xmlDoc.getElementsByTagName("parent")[0];
+                        if(parent) {
+                            const g = getText(parent, "groupId");
+                            const a = getText(parent, "artifactId");
+                            const v = getText(parent, "version");
+                            if (g && a && v && !v.startsWith('$')) {
+                                deps.push({ name: `${g}:${a}`, version: v, ecosystem: 'Maven' });
+                            }
+                        }
+                    } catch(e) { throw new Error("Failed to parse XML: " + e.message); }
+                }
+            } catch (e) { console.error(e); throw new Error("Failed to parse file. Check ecosystem."); }
+            const u = {}; deps.forEach(d => u[d.name] = d);
+            return Object.values(u);
+        }
+
+        // --- Display ---
+        function openModal(v) {
+            try {
+                modalTitle.innerText = v.ghsaId || v.id;
+                const sevBadge = getSeverityBadge(v.severity);
+                
+                modalContent.innerHTML = `
+                    <div class="space-y-6">
+                        <div>
+                            <p class="text-sm sm:text-base font-bold text-slate-800 dark:text-slate-100 mb-2">${v.summary || 'No summary available.'}</p>
+                            <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">${v.details || 'No details available.'}</div>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            <div class="flex flex-col items-center justify-center p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                                <span class="text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Severity</span>
+                                ${sevBadge}
+                            </div>
+                            <div class="flex flex-col items-center justify-center p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                                <span class="text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 mb-1">Affected</span>
+                                <span class="text-xs font-mono font-bold text-slate-700 dark:text-slate-200">${v.currentVersion}</span>
+                            </div>
+                            <div class="flex flex-col items-center justify-center p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-100 dark:border-green-800 col-span-2 sm:col-span-1">
+                                <span class="text-[10px] font-bold uppercase text-green-600 dark:text-green-400 mb-1">Fixed In</span>
+                                <span class="text-xs font-mono font-bold text-green-800 dark:text-green-200">${v.fixVersion}</span>
+                            </div>
+                        </div>
+                        ${v.ghsaId ? `<a href="${GHSA_BASE_URL}${v.ghsaId}" target="_blank" class="block w-full bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-xs font-bold p-3 rounded-lg text-center transition-colors border border-indigo-100 dark:border-indigo-800"><i data-lucide="github" class="w-3.5 h-3.5 inline mr-1.5 mb-0.5"></i> View on GitHub Advisory</a>` : ''}
+                        ${v.affectedRanges && v.affectedRanges.length > 0 ? `
+                        <div class="pt-4 border-t border-slate-100 dark:border-slate-800">
+                             <h4 class="text-[10px] font-bold text-slate-400 uppercase mb-3">Affected Ranges</h4>
+                             <div class="space-y-1.5 text-xs text-slate-600 dark:text-slate-400 font-mono max-h-24 overflow-y-auto">
+                                ${v.affectedRanges.map(r => `<div><span class="text-slate-400">${r.type}:</span> ${r.range}</div>`).join('')}
+                             </div>
+                        </div>` : ''}
+                        <div class="pt-4 border-t border-slate-100 dark:border-slate-800">
+                             <h4 class="text-[10px] font-bold text-slate-400 uppercase mb-3">References</h4>
+                             <div class="space-y-1.5 max-h-32 overflow-y-auto">
+                                ${(v.references || []).map(r => `<a href="${r.url}" target="_blank" class="flex items-center text-xs text-blue-600 dark:text-blue-400 hover:underline truncate"><i data-lucide="external-link" class="w-3 h-3 mr-2 text-blue-400 flex-shrink-0"></i>${r.url}</a>`).join('')}
+                             </div>
+                        </div>
+                        <div class="text-center pt-4 text-xs text-slate-300 dark:text-slate-600">
+                            Last Modified: ${formatDate(v.modified)}
+                        </div>
+                    </div>
+                `;
+                if(typeof lucide!=='undefined') lucide.createIcons();
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } catch (e) {
+                console.error("Failed to open modal", e);
+                alert("Could not open details for this item.");
+            }
+        }
+        function closeModal() { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+
+        // Added keyboard accessibility for modal opening
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+                closeModal();
+            }
+        });
+
+        function displayResults(vulns) {
+            resultsContainer.innerHTML = '';
+            initialMessage.classList.add('hidden');
+            
+            if (vulns.length > 0) {
+                 vulnerabilityCount.innerHTML = `${vulns.length} Issues`;
+                 vulnerabilityCount.className = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide flex";
+                 renderDashboard(calculateSecurityMetrics(vulns));
+                 downloadActions.classList.remove('hidden');
+            } else {
+                 vulnerabilityCount.innerHTML = `Secure`;
+                 vulnerabilityCount.className = "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide flex";
+                 securityDashboard.classList.add('hidden');
+                 downloadActions.classList.add('hidden');
+            }
+
+            if(vulns.length === 0) {
+                resultsContainer.innerHTML = `<div class="flex flex-col items-center justify-center h-full text-center pb-10"><div class="bg-green-50 dark:bg-green-900/20 p-6 rounded-full mb-4 ring-8 ring-green-50/50 dark:ring-green-900/10 animate-in zoom-in duration-300"><i data-lucide="shield-check" class="w-12 h-12 text-green-500 dark:text-green-400"></i></div><h3 class="text-lg font-bold text-slate-800 dark:text-slate-100">Clean Scan</h3><p class="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-xs">No known vulnerabilities found.</p></div>`;
+            } else {
+                vulns.forEach(v => {
+                    // Changed div to button for robust click handling
+                    const el = document.createElement('button');
+                    el.className = "w-full text-left group bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-primary dark:hover:border-primary transition-all relative overflow-hidden shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-slate-900";
+                    el.onclick = () => openModal(v);
+                    
+                    el.innerHTML = `
+                        <div class="absolute top-0 left-0 w-1.5 h-full ${v.severity==='CRITICAL'?'bg-red-600':v.severity==='HIGH'?'bg-orange-500':v.severity==='MEDIUM'?'bg-yellow-400':'bg-green-500'}"></div>
+                        <div class="pl-4 flex flex-col md:flex-row md:items-start justify-between gap-4">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <h3 class="font-bold text-slate-900 dark:text-slate-100 text-lg truncate">${v.packageName}</h3>
+                                    ${getSeverityBadge(v.severity)}
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-3">
+                                    ${v.ghsaId ? `<span class="flex items-center font-bold text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"><i data-lucide="github" class="w-3 h-3 mr-1.5"></i> ${v.ghsaId}</span>` : `<span class="font-bold text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700">OSV: ${v.id}</span>`}
+                                </div>
+                                <p class="text-sm text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">${v.summary}</p>
+                            </div>
+                            <div class="flex flex-col items-end gap-4 min-w-[140px] border-l border-slate-100 dark:border-slate-800 pl-4 md:self-stretch justify-center">
+                                <div class="text-right"><span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider block mb-0.5">Fix Version</span><p class="font-mono font-bold text-sm ${v.fixVersion==='No known fix'?'text-slate-400 dark:text-slate-500':'text-primary bg-blue-50 dark:bg-blue-900/20 dark:text-blue-300 px-2 py-0.5 rounded'}">${v.fixVersion}</p></div>
+                                <div class="text-primary text-xs font-bold flex items-center group-hover:translate-x-1 transition-transform">View Analysis <i data-lucide="arrow-right" class="w-3 h-3 ml-1"></i></div>
+                            </div>
+                        </div>
+                    `;
+                    resultsContainer.appendChild(el);
+                });
+                if(typeof lucide!=='undefined') lucide.createIcons();
+            }
+            vulnerabilityCount.classList.remove('hidden');
+        }
+
+        scanButton.addEventListener('click', () => {
+            const f = fileInput.files[0];
+            if(!f || !ecosystemSelect.value) return;
+            scanButton.disabled = true;
+            scanButton.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>`;
+            statusPill.innerHTML = `<span class="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2 animate-pulse"></span> Scanning...`;
+            statusPill.className = "px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-bold flex items-center border border-blue-200 dark:border-blue-800";
+            statusMessage.textContent = "Parsing manifest and querying OSV database...";
+            if(typeof lucide!=='undefined') lucide.createIcons();
+            resultsContainer.innerHTML = '';
+            securityDashboard.classList.add('hidden');
+            downloadActions.classList.add('hidden');
+            
+            const r = new FileReader();
+            r.onload = async (e) => {
+                try {
+                    const deps = parseDependencies(f.name, e.target.result, ecosystemSelect.value);
+                    if(deps.length===0) { displayResults([]); return; }
+                    const q = deps.map(d => ({ package: { name: d.name, ecosystem: d.ecosystem }, version: d.version }));
+                    const batchRes = await fetchWithRetry(API_URL_BATCH, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ queries: q }) });
+                    const hits = [];
+                    batchRes.results.forEach((res, i) => { if(res.vulns) res.vulns.forEach(v => hits.push({ id: v.id, dep: deps[i] })); });
+                    if(hits.length === 0) { displayResults([]); return; }
+                    statusMessage.textContent = `Found ${hits.length} potential issues. Fetching details...`;
+                    const details = await Promise.all(hits.map(async h => { try { const d = await fetchWithRetry(`${API_URL_VULN}${h.id}`); return { d, dep: h.dep }; } catch { return null; } }));
+                    
+                    currentScanResults = details.filter(x=>x).map(({d: v, dep}) => {
+                        let sev = 'UNKNOWN';
+                        if (v.database_specific?.severity && typeof v.database_specific.severity === 'string') sev = v.database_specific.severity;
+                        if (sev === 'UNKNOWN' && v.severity) { const cvss = v.severity.find(s => s.type.includes('CVSS')); if (cvss?.score && !isNaN(parseFloat(cvss.score))) sev = cvss.score; }
+                        
+                        let fix = 'No known fix';
+                        const aff = v.affected?.find(a => a.package.name === dep.name);
+                        let rangeStrArr = [];
+                        if(aff?.ranges) {
+                            for(const r of aff.ranges) {
+                                const e = r.events?.find(ev => ev.fixed);
+                                if(e) { fix = e.fixed; }
+                                const eventsStr = r.events?.map(ev => ev.introduced ? `Introduced: ${ev.introduced}` : ev.fixed ? `Fixed: ${ev.fixed}` : '').filter(s => s).join(', ');
+                                rangeStrArr.push({ type: r.type, range: eventsStr });
+                            }
+                        }
+                        const aliases = v.aliases || [];
+                        const ghsa = v.id.startsWith('GHSA-') ? v.id : aliases.find(a => a.startsWith('GHSA-'));
+                        return { id: v.id, summary: v.summary || "No summary.", details: v.details || "No details.", modified: v.modified, published: v.published, references: v.references || [], referenceCount: (v.references||[]).length, currentVersion: dep.version, packageName: dep.name, ecosystem: dep.ecosystem, fixVersion: fix, severity: sev, ghsaId: ghsa, cveIds: aliases.filter(a => a.startsWith('CVE-')), affectedRanges: rangeStrArr };
+                    });
+                    
+                    // Sort by severity
+                    currentScanResults.sort((a, b) => getSeverityWeight(b.severity) - getSeverityWeight(a.severity));
+                    
+                    displayResults(currentScanResults);
+                } catch (err) {
+                    alert("Scan failed: " + err.message); console.error(err);
+                    statusPill.innerHTML = `Error`; statusPill.className = "px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-xs font-bold flex items-center border border-red-200 dark:border-red-800";
+                    statusMessage.textContent = "Error during scan.";
+                } finally {
+                    scanButton.disabled = false; scanButton.innerHTML = `Scan`;
+                    if(statusPill.textContent.trim() !== 'Error') { statusPill.innerHTML = `<span class="w-1.5 h-1.5 bg-green-500 rounded-full mr-2"></span> Complete`; statusPill.className = "px-2.5 py-1 rounded-full bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-xs font-bold flex items-center border border-green-200 dark:border-green-800"; statusMessage.textContent = "Analysis complete."; }
+                    if(typeof lucide!=='undefined') lucide.createIcons();
+                }
+            };
+            r.readAsText(f);
+        });
+
+        fileInput.addEventListener('change', updateState);
+        ecosystemSelect.addEventListener('change', updateState);
+        window.onload = () => { if(typeof lucide!=='undefined') lucide.createIcons(); updateState(); updateThemeIcon(); };
+    </script>
+</body>
+</html>
